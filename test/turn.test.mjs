@@ -82,7 +82,8 @@ describe('STUN/TURN client', () => {
 
 // Private, loopback, link-local, CGNAT and reserved IPv4 peers a hardened relay refuses (deploy/coturn/turnserver.conf).
 const DENIED_PEERS = ['10.0.0.1', '172.16.0.1', '192.168.1.1', '127.0.0.1', '169.254.1.1', '100.64.0.1', '0.0.0.1', '240.0.0.1'];
-const PUBLIC_PEER = '1.1.1.1';
+// Any public address outside the TURN operator's own network (Cloudflare refuses its own 1.1.1.1 over UDP). A permission sends nothing.
+const PUBLIC_PEER = '8.8.8.8';
 
 const why = !REMOTE ? 'with BROKER_URL and BROKER_ORIGIN only' : (!REMOTE_ORIGIN ? 'set BROKER_ORIGIN to an origin that gets TURN credentials' : false);
 
@@ -129,7 +130,8 @@ describe('the deployed ICE servers' + (REMOTE ? ' of ' + REMOTE : ''), { skip: w
     test('TURN: wrong credentials are refused', async () => {
         const [first] = urls('turn:');
         if (!first) { return; }
-        await assert.rejects(allocate(parseIceURL(first.url), { username: first.server.username, credential: 'wrong' }, options), { code: 401 });
+        // RFC 8656 says 401; Cloudflare answers 400 over UDP. Refused either way.
+        await assert.rejects(allocate(parseIceURL(first.url), { username: first.server.username, credential: 'wrong' }, options), (error) => [400, 401].includes(error.code));
     });
 
 });
