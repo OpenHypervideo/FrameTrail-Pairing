@@ -1,0 +1,8 @@
+# /etc/systemd/system/coturn-cert.service: hands coturn Plesk's certificate for the broker's domain (coturn-cert.sh); replace pair.example.org below with it. Started daily by coturn-cert.timer, and before coturn (coturn-override.conf).
+
+[Unit]
+Description=Hand coturn the Let's Encrypt certificate Plesk keeps for the pairing broker's domain
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/coturn-cert.sh pair.example.org

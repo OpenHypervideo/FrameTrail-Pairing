@@ -1,0 +1,14 @@
+# /etc/systemd/system/coturn-cert.timer: Plesk renews Let's Encrypt certificates about 30 days before they expire; a daily look is plenty.
+#
+#   systemctl enable --now coturn-cert.timer
+
+[Unit]
+Description=Daily: hand coturn the renewed certificate
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

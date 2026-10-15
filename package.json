@@ -1,0 +1,24 @@
+{
+  "name": "frametrail-pairing",
+  "version": "1.0.0",
+  "description": "The pairing broker for FrameTrail (contract v1): passes WebRTC offers and answers between a FrameTrail player and phones, and hands out STUN/TURN servers.",
+  "license": "MIT",
+  "author": "Joscha Jaeger",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenHypervideo/FrameTrail-Pairing.git"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/pairing-broker.mjs",
+  "bin": {
+    "frametrail-pairing": "src/pairing-broker.mjs"
+  },
+  "scripts": {
+    "start": "node src/pairing-broker.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
