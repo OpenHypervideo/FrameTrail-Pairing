@@ -44,6 +44,9 @@ Every option can be given as an environment variable or on the command line; the
 | `STUN_URLS` | `--stun` | none | STUN servers for every page |
 | `CF_TURN_KEY_ID` | `--cf-turn-key-id` | none | Cloudflare Realtime TURN key id |
 | `CF_TURN_API_TOKEN` / `CF_TURN_API_TOKEN_FILE` | `--cf-turn-token` / `--cf-turn-token-file` | none | Its API token, or a file holding it |
+| `TURN_MONTHLY_LIMIT_GB` | `--turn-monthly-limit` | none | Usage guard: no Cloudflare TURN for the rest of the month once the key has relayed this many GB |
+| `CF_ACCOUNT_ID` | `--cf-account-id` | none | Usage guard: the Cloudflare account id |
+| `CF_ANALYTICS_TOKEN` / `CF_ANALYTICS_TOKEN_FILE` | `--cf-analytics-token` / `--cf-analytics-token-file` | none | Usage guard: an API token with Account Analytics: Read, or a file holding it |
 | `TURN_URLS` | `--turn` | none | coturn TURN server(s) with `use-auth-secret` |
 | `TURN_SECRET` / `TURN_SECRET_FILE` | `--turn-secret` / `--turn-secret-file` | none | coturn's `static-auth-secret`, or a file holding it |
 | `TURN_TTL` | `--turn-ttl` | `86400` | Lifetime of TURN credentials in seconds (at most 172800) |
@@ -58,6 +61,7 @@ Why these values:
 
 - **TURN credentials live 24 hours.** The player fetches `/ice` once, when pairing starts, and opens relays with those credentials for every phone that joins while its QR code is up, which in a classroom can be a whole school day. Cloudflare ends a relayed session shortly after its credentials expire, so a shorter lifetime would cut the player's relays in the middle of a lesson, which matters most on networks that only let TLS on port 443 out. (coturn keeps a running relay after its credentials expired; there the lifetime only limits when new relays can be opened.) Phones fetch `/ice` on every connect. Cloudflare's credentials are minted once and handed out for an hour, so every client gets between 23 and 24 hours; if Cloudflare cannot be reached, the last set is handed out while at least 12 hours are left, then none.
 - **TURN only for listed origins.** `ALLOWED_ORIGINS` keeps other websites from using the relay through their visitors' browsers. It is no authentication: a script can send any `Origin` (see Security). A companion page on another origin than the player (`pairingCompanionURL`) has to be listed as well.
+- **A usage guard for Cloudflare.** Anyone can fetch credentials from `/ice` and relay through Cloudflare at the operator's expense, and Cloudflare offers no spending cap. With `TURN_MONTHLY_LIMIT_GB` (and the account id and an analytics token) the broker asks Cloudflare's analytics every 5 minutes how much the TURN key has relayed to clients since the 1st of the month (UTC), which is what Cloudflare bills. At 80 % it logs a warning; at the limit it hands out no TURN until the next month and revokes every credential set it issued that has not expired, which ends the relays made with them. STUN stays, so pairing on one network keeps working. When the analytics cannot be read, TURN stays on and the log says so. The limit counts this key only; 1,000 GB a month are free, so a limit well below that, such as 500, keeps the bill at zero even if someone relays a lot within the 5 minutes between two looks.
 - **1200 requests a minute per client, 600 at once.** A whole class pairs from behind one public address: each phone makes about seven requests while it pairs, each player polls once a second, and a school may run several players behind the same address. The limit is a token bucket, so a client that hits it waits about a second, not a minute. IPv6 clients count by their /64, since a single device can pick addresses from a whole /64.
 - **Fixed limits** (in `DEFAULTS`, `src/pairing-broker.mjs`): rooms live 120 s after the player's last request, offers and answers 60 s, blobs up to 64 KB, 64 waiting offers and 128 answers per room, 10,000 rooms, 64 MB of offers and answers in all.
 
@@ -84,6 +88,11 @@ The broker needs Node 20 or later (step 4), the public IPv4 (and IPv6, if any) a
 ### 2. A TURN key at Cloudflare
 
 In the Cloudflare dashboard, open the **Realtime** section (once called Calls) and its TURN server page, and create a TURN key (name it, say, `frametrail-pairing`). Note its **key id** and **API token**; the token is shown only once and goes only into the broker's configuration on the server (step 5). Usage up to 1,000 GB a month is free, then $0.05 per GB; pairing needs a tiny fraction of that (see Operating).
+
+For the usage guard (see Configuration) the broker also needs:
+
+- the **account id**: in the dashboard's account overview ("Account ID", 32 hexadecimal characters; it is also the part of the dashboard's address after `dash.cloudflare.com/`);
+- an **API token that can read the account's analytics**: **My Profile → API Tokens → Create Token → Create Custom Token**, permission **Account → Account Analytics → Read**, account resources **Include → your account**. It can read usage figures and nothing else.
 
 ### 3. DNS
 
@@ -169,12 +178,12 @@ Best outside lessons: a restart empties the broker's memory. Players open their 
 ## Operating
 
 - **Log:** `journalctl -u frametrail-pairing`. At `info`, one line per request except the polls that find nothing new, and every 10 minutes a summary (requests, offers, answers, rate-limited requests, open rooms). No addresses, no offers or answers, ids cut to four characters.
-- **Cloudflare usage:** the dashboard's Realtime section shows the TURN traffic; Cloudflare also offers it through its GraphQL analytics API. Pairing traffic is small: a few hundred bytes a second per phone plus the hypervideo once, and only for phones that need a relay. Cloudflare documents no spending cap and no usage alert, so look now and then.
+- **Cloudflare usage:** the dashboard's Realtime section shows the TURN traffic; Cloudflare also offers it through its GraphQL analytics API. Pairing traffic is small: a few hundred bytes a second per phone plus the hypervideo once, and only for phones that need a relay. Cloudflare documents no spending cap and no usage alert; the usage guard (see Configuration) is this broker's own. The log shows its first look after every start ("Cloudflare TURN usage this month: …"), its warning at 80 % and when it turns TURN off.
 - **When credentials are abused:** revoke the set the broker hands out (the `username` from `/ice`):
   ```bash
   curl -X POST -H "Authorization: Bearer $CF_TURN_API_TOKEN" https://rtc.live.cloudflare.com/v1/turn/keys/$CF_TURN_KEY_ID/credentials/<username>/revoke
   ```
-  then restart the broker for a new set. Deleting the TURN key at Cloudflare ends all of them; removing the `CF_` lines from `broker.env` and restarting turns TURN off (STUN stays).
+  then restart the broker for a new set. The usage guard revokes everything the broker issued on its own once the month's limit is reached. Deleting the TURN key at Cloudflare ends all of them; removing the `CF_` lines from `broker.env` and restarting turns TURN off (STUN stays).
 - **Classrooms:** FrameTrail takes up to 50 phones per player; a room holds 64 waiting offers; a class behind one address stays far below the rate limit. School WiFi that keeps devices apart (client isolation) needs TURN for every phone.
 
 ## Self-hosting TURN with coturn
@@ -224,7 +233,7 @@ systemd-analyze security coturn | tail -1
 
 - **Neither the broker nor a relay can impersonate the player or read along.** The QR code carries the fingerprint of the player's certificate and the phone refuses an answer with another one; the channel is DTLS-encrypted end to end (FrameTrail's docs/PAIRING.md, "Security Model").
 - **Only the player answers its phones:** the first request for a room sets its host key; the broker keeps only a hash.
-- **`ALLOWED_ORIGINS` is no authentication.** It keeps other websites from handing our TURN to their visitors' browsers; a script can send any `Origin` header and get credentials, and relay traffic at the operator's expense. The rate limit bounds how often, Cloudflare's usage shows it, and credentials can be revoked (see Operating). The contract has no way for the broker to tie credentials to a room, since `GET /ice` comes before the room.
+- **`ALLOWED_ORIGINS` is no authentication.** It keeps other websites from handing our TURN to their visitors' browsers; a script can send any `Origin` header and get credentials, and relay traffic at the operator's expense. The usage guard keeps the cost below a monthly limit, Cloudflare's usage shows what happened, and credentials can be revoked (see Operating). The contract has no way for the broker to tie credentials to a room, since `GET /ice` comes before the room.
 - **After a restart** a room is gone until its player opens it again, within a second. Someone who saw the projected QR code could open it first with another key; the player is then refused (FrameTrail reports the broker as unreachable) and pairing for that code stops until it is stopped and started again. Phones still check the fingerprint, so nobody can take the player's place.
 - The broker listens on 127.0.0.1 only and runs sandboxed by systemd; the web server in front handles TLS.
 

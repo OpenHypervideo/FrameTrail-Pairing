@@ -63,7 +63,7 @@ function shortId(id) {
 /**
  * I make a broker: handle(req, res) answers the requests of the contract.
  *
- * options: now() (ms; the clock, injectable for tests); the ICE servers: stun and turn (lists of URLs), turnSecret, turnTTL, cfTurnKeyId and cfTurnToken (Cloudflare), iceProviders (more providers, see ice.mjs), allowedOrigins (who gets TURN credentials; empty: everyone), fetch (for Cloudflare); trustedProxies (addresses and CIDR ranges whose X-Forwarded-For counts); log (a function taking a line, or null for silence), logLevel; and the limits in DEFAULTS.
+ * options: now() (ms; the clock, injectable for tests); the ICE servers: stun and turn (lists of URLs), turnSecret, turnTTL, cfTurnKeyId and cfTurnToken (Cloudflare), cfAccountId, cfAnalyticsToken and turnMonthlyLimitGB (Cloudflare's usage guard), iceProviders (more providers, see ice.mjs), allowedOrigins (who gets TURN credentials; empty: everyone), fetch (for Cloudflare); trustedProxies (addresses and CIDR ranges whose X-Forwarded-For counts); log (a function taking a line, or null for silence), logLevel; and the limits in DEFAULTS.
  */
 export function createBroker(options = {}) {
 
@@ -91,7 +91,10 @@ export function createBroker(options = {}) {
         providers.push(coturnProvider({ urls: config.turn, secret: config.turnSecret, ttl: config.turnTTL }));
     }
     if (config.cfTurnKeyId && config.cfTurnToken) {
-        providers.push(cloudflareProvider({ keyId: config.cfTurnKeyId, token: config.cfTurnToken, ttl: config.turnTTL, now, fetch: config.fetch, log }));
+        const guard = (config.cfAccountId && config.cfAnalyticsToken && config.turnMonthlyLimitGB)
+            ? { accountId: config.cfAccountId, token: config.cfAnalyticsToken, limit: config.turnMonthlyLimitGB * 1e9, every: config.usageEvery }
+            : null;
+        providers.push(cloudflareProvider({ keyId: config.cfTurnKeyId, token: config.cfTurnToken, ttl: config.turnTTL, now, fetch: config.fetch, log, guard }));
     }
     if (config.iceProviders) { providers.push(...config.iceProviders); }
 
@@ -357,9 +360,12 @@ export function createBroker(options = {}) {
     return {
         handle,
         ice,
-        // At startup: credentials from providers that fetch them (Cloudflare), ready before the first request.
+        // At startup: credentials from providers that fetch them (Cloudflare), ready before the first request, and the usage guard.
         warm() {
-            return Promise.all(providers.filter((provider) => provider.warm).map((provider) => provider.warm()));
+            return Promise.all(providers.map((provider) => (provider.start ? provider.start() : (provider.warm ? provider.warm() : null))));
+        },
+        stop() {
+            providers.forEach((provider) => provider.stop && provider.stop());
         },
         get rooms() { return rooms; },
         get stored() { return stored; }
@@ -392,7 +398,7 @@ function describe(options) {
     const ice = [];
     if (options.stun.length) { ice.push('STUN'); }
     if (options.turn.length) { ice.push('coturn TURN'); }
-    if (options.cfTurnKeyId) { ice.push('Cloudflare TURN'); }
+    if (options.cfTurnKeyId) { ice.push('Cloudflare TURN' + (options.turnMonthlyLimitGB ? ' (at most ' + options.turnMonthlyLimitGB + ' GB a month)' : '')); }
     const credentials = (options.turn.length || options.cfTurnKeyId)
         ? '; TURN credentials for ' + Math.round(options.turnTTL / 3600 * 10) / 10 + ' h, to ' + (options.allowedOrigins.length ? options.allowedOrigins.join(' ') : 'every origin')
         : '';
@@ -424,6 +430,7 @@ function main(argv, env) {
         }
         server.broker.warm();
         const stop = () => {
+            server.broker.stop();
             server.close(() => process.exit(0));
             setTimeout(() => process.exit(0), 5000).unref();
         };

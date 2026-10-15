@@ -16,6 +16,10 @@ const OPTIONS = [
     ['cfTurnKeyId',     '--cf-turn-key-id',     'CF_TURN_KEY_ID',           'string', '<id>',      'Cloudflare Realtime TURN key id'],
     ['cfTurnToken',     '--cf-turn-token',      'CF_TURN_API_TOKEN',        'secret', '<token>',   'Its API token'],
     ['cfTurnTokenFile', '--cf-turn-token-file', 'CF_TURN_API_TOKEN_FILE',   'string', '<file>',    'A file holding the API token'],
+    ['turnMonthlyLimitGB', '--turn-monthly-limit', 'TURN_MONTHLY_LIMIT_GB', 'gb',     '<GB>',      'Usage guard: no Cloudflare TURN for the rest of the month once the key relayed this much'],
+    ['cfAccountId',     '--cf-account-id',      'CF_ACCOUNT_ID',            'string', '<id>',      'Usage guard: the Cloudflare account id'],
+    ['cfAnalyticsToken', '--cf-analytics-token', 'CF_ANALYTICS_TOKEN',      'secret', '<token>',   'Usage guard: an API token with Account Analytics: Read'],
+    ['cfAnalyticsTokenFile', '--cf-analytics-token-file', 'CF_ANALYTICS_TOKEN_FILE', 'string', '<file>', 'A file holding that token'],
     ['turn',            '--turn',               'TURN_URLS',                'list',   '<url>',     'coturn TURN server with use-auth-secret, e.g. turn:turn.example.org:3478 (repeatable)'],
     ['turnSecret',      '--turn-secret',        'TURN_SECRET',              'secret', '<secret>',  'coturn\'s static-auth-secret'],
     ['turnSecretFile',  '--turn-secret-file',   'TURN_SECRET_FILE',         'string', '<file>',    'A file holding the secret'],
@@ -54,6 +58,9 @@ function value(kind, text, name) {
             return number;
         case 'ttl':
             if (!/^\d+$/.test(text) || number < 60 || number > MAX_TURN_TTL) { throw new Error(name + ' must be between 60 and ' + MAX_TURN_TTL + ' seconds, not ' + text); }
+            return number;
+        case 'gb':
+            if (!/^\d+(\.\d+)?$/.test(text) || !(number > 0)) { throw new Error(name + ' must be a number of gigabytes, not ' + text); }
             return number;
         case 'level':
             if (!LOG_LEVELS.includes(text)) { throw new Error(name + ' must be one of ' + LOG_LEVELS.join(', ') + ', not ' + text); }
@@ -98,8 +105,10 @@ export function readConfig(argv = [], env = {}) {
 
     if (o.turnSecretFile && !o.turnSecret) { o.turnSecret = readSecretFile(o.turnSecretFile); }
     if (o.cfTurnTokenFile && !o.cfTurnToken) { o.cfTurnToken = readSecretFile(o.cfTurnTokenFile); }
+    if (o.cfAnalyticsTokenFile && !o.cfAnalyticsToken) { o.cfAnalyticsToken = readSecretFile(o.cfAnalyticsTokenFile); }
     delete o.turnSecretFile;
     delete o.cfTurnTokenFile;
+    delete o.cfAnalyticsTokenFile;
 
     if (!help) {
         if (o.turn.length && !o.turnSecret) {
@@ -107,6 +116,16 @@ export function readConfig(argv = [], env = {}) {
         }
         if (Boolean(o.cfTurnKeyId) !== Boolean(o.cfTurnToken)) {
             throw new Error('Cloudflare TURN needs both the key id (CF_TURN_KEY_ID) and its API token (CF_TURN_API_TOKEN)');
+        }
+        const guard = [o.cfAccountId, o.cfAnalyticsToken, o.turnMonthlyLimitGB].filter(Boolean).length;
+        if (guard && guard < 3) {
+            throw new Error('The usage guard needs CF_ACCOUNT_ID, CF_ANALYTICS_TOKEN and TURN_MONTHLY_LIMIT_GB together');
+        }
+        if (guard && !o.cfTurnKeyId) {
+            throw new Error('The usage guard watches Cloudflare TURN, which needs CF_TURN_KEY_ID and CF_TURN_API_TOKEN');
+        }
+        if (o.cfAccountId && !/^[0-9a-f]{32}$/i.test(o.cfAccountId)) {
+            throw new Error('CF_ACCOUNT_ID must be the 32 hexadecimal characters of the account id, not ' + o.cfAccountId);
         }
         if (Boolean(o.cert) !== Boolean(o.key)) {
             throw new Error('https needs both --cert and --key');

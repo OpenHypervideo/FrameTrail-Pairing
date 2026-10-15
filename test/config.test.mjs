@@ -81,6 +81,33 @@ describe('configuration', () => {
         }
     });
 
+    test('the usage guard: all three settings, or none', () => {
+        const env = { CF_TURN_KEY_ID: 'key', CF_TURN_API_TOKEN: 'token', CF_ACCOUNT_ID: 'A'.repeat(32), CF_ANALYTICS_TOKEN: 'analytics', TURN_MONTHLY_LIMIT_GB: '500' };
+        const { options } = readConfig([], env);
+        assert.equal(options.cfAccountId, 'A'.repeat(32));
+        assert.equal(options.cfAnalyticsToken, 'analytics');
+        assert.equal(options.turnMonthlyLimitGB, 500);
+        assert.equal(readConfig(['--turn-monthly-limit', '2.5'], env).options.turnMonthlyLimitGB, 2.5);
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pairing-config-'));
+        try {
+            fs.writeFileSync(path.join(dir, 'analytics'), 'from-file\n');
+            assert.equal(readConfig([], Object.assign({}, env, { CF_ANALYTICS_TOKEN: '', CF_ANALYTICS_TOKEN_FILE: path.join(dir, 'analytics') })).options.cfAnalyticsToken, 'from-file');
+        } finally {
+            fs.rmSync(dir, { recursive: true });
+        }
+        const refused = [
+            [Object.assign({}, env, { CF_ANALYTICS_TOKEN: '' }), /needs CF_ACCOUNT_ID, CF_ANALYTICS_TOKEN and TURN_MONTHLY_LIMIT_GB together/],
+            [Object.assign({}, env, { TURN_MONTHLY_LIMIT_GB: '' }), /together/],
+            [Object.assign({}, env, { CF_TURN_KEY_ID: '', CF_TURN_API_TOKEN: '' }), /watches Cloudflare TURN/],
+            [Object.assign({}, env, { CF_ACCOUNT_ID: 'my-account' }), /32 hexadecimal characters/],
+            [Object.assign({}, env, { TURN_MONTHLY_LIMIT_GB: '0' }), /must be a number of gigabytes/],
+            [Object.assign({}, env, { TURN_MONTHLY_LIMIT_GB: 'lots' }), /must be a number of gigabytes/]
+        ];
+        for (const [wrong, message] of refused) {
+            assert.throws(() => readConfig([], wrong), message, JSON.stringify(wrong));
+        }
+    });
+
     test('what is refused, with a message that says why', () => {
         const refused = [
             [['--turn', 'turn:t.example:3478'], {}, /--turn needs --turn-secret/],
