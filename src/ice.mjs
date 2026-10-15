@@ -215,14 +215,24 @@ export function cloudflareProvider(options) {
 }
 
 
+// A wildcard host: `*` as the whole leftmost label, then at least two labels (*.example.org, not *.org).
+const WILDCARD_HOST = /^\*(\.[a-z0-9-]+){2,}$/;
+
+// The one label a wildcard stands for.
+const LABEL = /^[a-z0-9-]+$/;
+
 /**
- * An origin as browsers send it (scheme, host, port; no path). Throws on anything else.
+ * An origin as browsers send it (scheme, host, port; no path), or a wildcard origin: `*` for the leftmost label of the host, which stands for exactly one label (https://*.example.org: https://www.example.org, not https://example.org or https://a.b.example.org). Throws on anything else.
  */
 export function normalizeOrigin(text) {
     let url;
     try { url = new URL(String(text).trim()); } catch (e) { url = null; }
     if (!url || !/^https?:$/.test(url.protocol) || (url.pathname !== '/' || url.search || url.hash) || url.username || url.password) {
         throw new Error('not an origin (scheme://host[:port], without a path): ' + text);
+    }
+    // The URL parser takes a * anywhere in a host, and such an entry would match nothing.
+    if (url.hostname.includes('*') && !WILDCARD_HOST.test(url.hostname)) {
+        throw new Error('not an origin: a wildcard is the whole leftmost label of a domain with at least two more (https://*.example.org): ' + text);
     }
     return url.origin;
 }
@@ -234,14 +244,32 @@ const hasCredentials = (server) => server.username !== undefined || server.crede
  */
 export function createIce({ providers = [], allowedOrigins = [] } = {}) {
 
-    const origins = new Set(allowedOrigins.map(normalizeOrigin));
+    const origins = new Set(), wildcards = [];
+
+    // A wildcard origin is kept as what comes before its * (the scheme) and after it (the rest of the host, and the port).
+    for (const origin of allowedOrigins.map(normalizeOrigin)) {
+        const star = origin.indexOf('://*.');
+        if (star === -1) {
+            origins.add(origin);
+        } else {
+            wildcards.push({ before: origin.slice(0, star + 3), after: origin.slice(star + 4) });
+        }
+    }
+
+    // The Origin header as browsers send it, which is what the list holds: lower case, no default port. Exactly one label in place of the *.
+    function matchesWildcard(origin) {
+        return wildcards.some(({ before, after }) => origin.length > before.length + after.length
+            && origin.startsWith(before) && origin.endsWith(after)
+            && LABEL.test(origin.slice(before.length, origin.length - after.length)));
+    }
 
     return {
 
         providers,
 
         allowsCredentials(origin) {
-            return origins.size === 0 || origins.has(String(origin || ''));
+            const text = String(origin || '');
+            return (origins.size === 0 && wildcards.length === 0) || origins.has(text) || matchesWildcard(text);
         },
 
         async servers(origin, now) {

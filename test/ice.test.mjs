@@ -56,6 +56,43 @@ describe('ICE servers', () => {
         }
     });
 
+    test('origins: a wildcard is the whole leftmost label of a domain with two more', () => {
+        assert.equal(normalizeOrigin('https://*.example.org'), 'https://*.example.org');
+        assert.equal(normalizeOrigin('HTTPS://*.Example.ORG:443/'), 'https://*.example.org', 'normalized like any origin');
+        assert.equal(normalizeOrigin(normalizeOrigin('https://*.example.org')), 'https://*.example.org', 'and again: the list is normalized twice');
+        assert.equal(normalizeOrigin('http://*.example.org:8080'), 'http://*.example.org:8080');
+        for (const wrong of ['*.example.org', 'https://*', 'https://*.org', 'https://a.*.example.org', 'https://**.example.org', 'https://x*.example.org', 'https://*.*.example.org']) {
+            assert.throws(() => normalizeOrigin(wrong), /not an origin/, wrong);
+        }
+    });
+
+    test('a wildcard origin: credentials for one label under the domain, nothing else', async () => {
+        const ice = createIce({
+            providers: [stunProvider(['stun:stun.cloudflare.com:3478']), coturnProvider({ urls: ['turn:turn.example.org:3478'], secret: 's', ttl: 600 })],
+            allowedOrigins: ['https://*.example.org', 'https://other.example']
+        });
+        for (const origin of ['https://www.example.org', 'https://yourproject.example.org', 'https://a-1.example.org', 'https://other.example']) {
+            assert.ok(ice.allowsCredentials(origin), origin);
+            assert.equal((await ice.servers(origin, 1000000)).length, 2, 'STUN and TURN for ' + origin);
+        }
+        for (const origin of [undefined, '', 'null', 'https://example.org', 'https://a.b.example.org', 'http://www.example.org', 'https://www.example.org:8443',
+            'https://www.example.org.evil.example', 'https://wwwexample.org', 'https://evil.example/.example.org', 'https://.example.org', 'https://WWW.example.org']) {
+            assert.ok(!ice.allowsCredentials(origin), 'no credentials for ' + origin);
+        }
+        const ported = createIce({ providers: [], allowedOrigins: ['http://*.example.org:8080'] });
+        assert.ok(ported.allowsCredentials('http://dev.example.org:8080'));
+        assert.ok(!ported.allowsCredentials('http://dev.example.org'), 'the port is part of the origin');
+    });
+
+    test('through the broker: TURN for every page under a wildcard origin', () => withBroker({
+        stun: ['stun:stun.cloudflare.com:3478'], turn: ['turn:turn.example.org:3478'], turnSecret: 's', allowedOrigins: ['https://*.example.org']
+    }, async ({ base }) => {
+        const allowed = await (await fetch(base + 'ice', { headers: { 'Origin': 'https://yourproject.example.org' } })).json();
+        assert.ok(allowed.iceServers[1].username && allowed.iceServers[1].credential);
+        const apex = await (await fetch(base + 'ice', { headers: { 'Origin': 'https://example.org' } })).json();
+        assert.deepStrictEqual(apex.iceServers, [{ urls: ['stun:stun.cloudflare.com:3478'] }]);
+    }));
+
     test('credentials only for the allowed origins; STUN for everyone; every URL once', async () => {
         const ice = createIce({
             providers: [

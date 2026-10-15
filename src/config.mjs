@@ -24,7 +24,7 @@ const OPTIONS = [
     ['turnSecret',      '--turn-secret',        'TURN_SECRET',              'secret', '<secret>',  'coturn\'s static-auth-secret'],
     ['turnSecretFile',  '--turn-secret-file',   'TURN_SECRET_FILE',         'string', '<file>',    'A file holding the secret'],
     ['turnTTL',         '--turn-ttl',           'TURN_TTL',                 'ttl',    '<seconds>', 'Lifetime of TURN credentials (default 86400, at most 172800)'],
-    ['allowedOrigins',  '--allowed-origin',     'ALLOWED_ORIGINS',          'list',   '<origin>',  'Only pages of this origin get TURN credentials; STUN goes to all (repeatable; default: every origin)'],
+    ['allowedOrigins',  '--allowed-origin',     'ALLOWED_ORIGINS',          'list',   '<origin>',  'Only pages of this origin get TURN credentials; STUN goes to all. https://*.example.org stands for one label (repeatable; default: every origin)'],
     ['trustedProxies',  '--trusted-proxy',      'TRUSTED_PROXIES',          'list',   '<ip|cidr>', 'Proxy whose X-Forwarded-For / X-Real-IP name the client (repeatable; default none)'],
     ['rateLimit',       '--rate-limit',         'RATE_LIMIT',               'count',  '<n>',       'Requests per client and minute, sustained (default 1200)'],
     ['rateBurst',       '--rate-burst',         'RATE_BURST',               'count',  '<n>',       'Requests per client at once (default half the rate limit)'],

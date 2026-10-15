@@ -41,14 +41,14 @@ describe('configuration', () => {
     test('the environment, as a systemd unit sets it', () => {
         const { options } = readConfig([], {
             HOST: '127.0.0.1', PORT: '8787', STUN_URLS: 'stun:stun.cloudflare.com:3478', CF_TURN_KEY_ID: 'key', CF_TURN_API_TOKEN: 'token',
-            TURN_TTL: '86400', ALLOWED_ORIGINS: 'https://www.example.org/, https://example.net', TRUSTED_PROXIES: '127.0.0.1 ::1',
+            TURN_TTL: '86400', ALLOWED_ORIGINS: 'https://www.example.org/, https://example.net https://*.Example.com', TRUSTED_PROXIES: '127.0.0.1 ::1',
             RATE_LIMIT: '600', RATE_BURST: '300', LOG_LEVEL: 'warn', UNRELATED: 'x'
         });
         assert.equal(options.host, '127.0.0.1');
         assert.deepStrictEqual(options.stun, ['stun:stun.cloudflare.com:3478']);
         assert.equal(options.cfTurnKeyId, 'key');
         assert.equal(options.cfTurnToken, 'token');
-        assert.deepStrictEqual(options.allowedOrigins, ['https://www.example.org', 'https://example.net'], 'commas or spaces; origins normalized');
+        assert.deepStrictEqual(options.allowedOrigins, ['https://www.example.org', 'https://example.net', 'https://*.example.com'], 'commas or spaces; origins normalized');
         assert.deepStrictEqual(options.trustedProxies, ['127.0.0.1', '::1']);
         assert.equal(options.rateLimit, 600);
         assert.equal(options.rateBurst, 300);
@@ -117,6 +117,8 @@ describe('configuration', () => {
             [['--stun', 'turn:t.example:3478'], {}, /not a STUN URL/],
             [['--turn', 'stun:s.example', '--turn-secret', 's'], {}, /not a TURN URL/],
             [['--allowed-origin', 'https://example.org/path'], {}, /not an origin/],
+            [[], { ALLOWED_ORIGINS: 'https://*.org' }, /a wildcard is the whole leftmost label/],
+            [['--allowed-origin', 'https://a.*.example.org'], {}, /a wildcard is the whole leftmost label/],
             [['--trusted-proxy', 'localhost'], {}, /not an IP address or CIDR range/],
             [['--port', '70000'], {}, /--port must be a port number/],
             [[], { RATE_LIMIT: '0' }, /RATE_LIMIT must be a positive whole number/],
